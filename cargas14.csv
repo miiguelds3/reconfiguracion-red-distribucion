@@ -1,0 +1,15 @@
+﻿node;Pd;Qd;tipo
+N1;0.0;0.0;slack
+N2;2.0;1.6;residencial
+N3;3.0;0.4;comercial
+N4;2.0;-0.4;industrial
+N5;1.5;1.2;residencial
+N6;4.0;2.7;comercial
+N7;5.0;1.8;industrial
+N8;1.0;0.9;residencial
+N9;0.6;-0.4;comercial
+N10;4.5;-1.7;industrial
+N11;1.0;0.9;residencial
+N12;1.0;-1.1;comercial
+N13;1.0;0.9;industrial
+N14;2.1;-0.8;residencial
