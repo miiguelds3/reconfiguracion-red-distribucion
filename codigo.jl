@@ -579,7 +579,7 @@ println("="^80)
 
 
 # ============================================
-# ESCENARIO ESTÁTICO (CORRECCIÓN 1):
+# ESCENARIO ESTÁTICO:
 #   Reconfigurar usando SOLO la demanda de h=12 para elegir la topología,
 #   fijarla y evaluar su efecto sobre las pérdidas en las 24 horas.
 #   Luego se compara con el escenario dinámico (FASE 2).
