@@ -577,3 +577,206 @@ println("\n" * "="^80)
 println("SIMULACIÓN COMPLETADA - ESCENARIO $ESCENARIO")
 println("="^80)
 
+
+# ============================================
+# ESCENARIO ESTÁTICO (CORRECCIÓN 1):
+#   Reconfigurar usando SOLO la demanda de h=12 para elegir la topología,
+#   fijarla y evaluar su efecto sobre las pérdidas en las 24 horas.
+#   Luego se compara con el escenario dinámico (FASE 2).
+# ============================================
+println("\n" * "═"^64)
+println("ESCENARIO ESTÁTICO: RECONFIGURACIÓN CON SOLO LA DEMANDA DE h=12")
+println("═"^64)
+
+h_pico = 12
+
+# ---- Paso 1: elegir la topología estática resolviendo el MINLP solo en h=12 ----
+model_static_minlp = Model(juniper_solver)
+
+@variable(model_static_minlp, VMIN <= vs[k in nodes] <= VMAX)
+@variable(model_static_minlp, vrs[k in nodes])
+@variable(model_static_minlp, vis[k in nodes])
+@variable(model_static_minlp, Irs[l in branches])
+@variable(model_static_minlp, Iis[l in branches])
+@variable(model_static_minlp, Pgs[g in GENERADORES] >= 0)
+@variable(model_static_minlp, Qgs[g in GENERADORES])
+
+if !GD_ACTIVO
+    @variable(model_static_minlp, Pgds[k in nodes] == 0)
+    @variable(model_static_minlp, Qgds[k in nodes] == 0)
+    @variable(model_static_minlp, Qcs[k in nodes] == 0)
+else
+    @variable(model_static_minlp, Pgds[k in nodes] >= 0)
+    @variable(model_static_minlp, Qgds[k in nodes])
+    @variable(model_static_minlp, Qcs[k in nodes] == 0)
+end
+
+@variable(model_static_minlp, ys[l in branches], Bin, start = l in TIE_LINES ? 0.0 : 1.0)
+
+fix(vrs[SLACK_BUS], 1.0)
+fix(vis[SLACK_BUS], 0.0)
+
+@objective(model_static_minlp, Min, sum(lines[l].Rl * (Irs[l]^2 + Iis[l]^2) for l in branches))
+
+for k in nodes
+    ld = load_hourly[(k, h_pico)]
+    @constraint(model_static_minlp,
+        sum(Pgs[g] for g in GENERADORES if map_gen_node[g] == k) + Pgds[k] - ld.Pd ==
+        sum(get(A, (k, l), 0) * (vrs[k] * Irs[l] + vis[k] * Iis[l]) for l in branches))
+    @constraint(model_static_minlp,
+        sum(Qgs[g] for g in GENERADORES if map_gen_node[g] == k) + Qgds[k] + Qcs[k] - ld.Qd ==
+        -sum(get(A, (k, l), 0) * (vrs[k] * Iis[l] - vis[k] * Irs[l]) for l in branches))
+end
+
+for l in branches
+    i, j = line_conn[l].from, line_conn[l].to
+    R = lines[l].Rl
+    X = lines[l].Xl
+    den = R^2 + X^2
+    @constraint(model_static_minlp,
+        Irs[l] == ys[l] * (R * (vrs[i] - vrs[j]) + X * (vis[i] - vis[j])) / den)
+    @constraint(model_static_minlp,
+        Iis[l] == ys[l] * (R * (vis[i] - vis[j]) - X * (vrs[i] - vrs[j])) / den)
+end
+
+for k in nodes
+    @constraint(model_static_minlp, vs[k]^2 == vrs[k]^2 + vis[k]^2)
+end
+
+@constraint(model_static_minlp, sum(ys[l] for l in branches) == length(nodes) - 1)
+
+println("Resolviendo MINLP estático (solo h=$h_pico)...")
+optimize!(model_static_minlp)
+
+if termination_status(model_static_minlp) ∉ [MOI.OPTIMAL, MOI.LOCALLY_SOLVED]
+    error("MINLP estático falló: ", termination_status(model_static_minlp))
+end
+
+topologia_estatica = [l for l in branches if value(ys[l]) > 0.5]
+lineas_apagadas_estatico = [l for l in branches if value(ys[l]) < 0.5]
+println("  Topología estática (h=$h_pico): activas = ", join(topologia_estatica, ", "))
+println("  Lin. desconectadas (estático) : ", join(lineas_apagadas_estatico, ", "))
+
+# ---- Paso 2: evaluar la topología estática fija en las 24 horas (NLP) ----
+model_static_24 = Model(nl_solver)
+
+@variable(model_static_24, VMIN <= vs24[k in nodes, h in horas] <= VMAX, start = value(v[k, h]))
+@variable(model_static_24, vrs24[k in nodes, h in horas], start = value(vr[k, h]))
+@variable(model_static_24, vis24[k in nodes, h in horas], start = value(vi[k, h]))
+@variable(model_static_24, Irs24[l in branches, h in horas], start = l in topologia_estatica ? value(Ir[l, h]) : 0.0)
+@variable(model_static_24, Iis24[l in branches, h in horas], start = l in topologia_estatica ? value(Ii[l, h]) : 0.0)
+@variable(model_static_24, Pgs24[g in GENERADORES, h in horas] >= 0, start = value(Pg[g, h]))
+@variable(model_static_24, Qgs24[g in GENERADORES, h in horas], start = value(Qg[g, h]))
+
+if !GD_ACTIVO
+    @variable(model_static_24, Pgds24[k in nodes, h in horas] == 0, start = 0)
+    @variable(model_static_24, Qgds24[k in nodes, h in horas] == 0, start = 0)
+    @variable(model_static_24, Qcs24[k in nodes, h in horas] == 0, start = 0)
+else
+    @variable(model_static_24, Pgds24[k in nodes, h in horas] >= 0, start = 0)
+    @variable(model_static_24, Qgds24[k in nodes, h in horas], start = 0)
+    @variable(model_static_24, Qcs24[k in nodes, h in horas] == 0, start = 0)
+end
+
+for h in horas
+    fix(vrs24[SLACK_BUS, h], 1.0)
+    fix(vis24[SLACK_BUS, h], 0.0)
+end
+
+@objective(model_static_24, Min, sum(
+    sum(lines[l].Rl * (Irs24[l, h]^2 + Iis24[l, h]^2) for l in branches) for h in horas
+))
+
+for h in horas
+    for k in nodes
+        ld = load_hourly[(k, h)]
+        @constraint(model_static_24,
+            sum(Pgs24[g, h] for g in GENERADORES if map_gen_node[g] == k) + Pgds24[k, h] - ld.Pd ==
+            sum(get(A, (k, l), 0) * (vrs24[k, h] * Irs24[l, h] + vis24[k, h] * Iis24[l, h]) for l in branches))
+        @constraint(model_static_24,
+            sum(Qgs24[g, h] for g in GENERADORES if map_gen_node[g] == k) + Qgds24[k, h] + Qcs24[k, h] - ld.Qd ==
+            -sum(get(A, (k, l), 0) * (vrs24[k, h] * Iis24[l, h] - vis24[k, h] * Irs24[l, h]) for l in branches))
+    end
+
+    for l in branches
+        if l in topologia_estatica
+            i, j = line_conn[l].from, line_conn[l].to
+            R = lines[l].Rl
+            X = lines[l].Xl
+            den = R^2 + X^2
+            @constraint(model_static_24,
+                Irs24[l, h] == (R * (vrs24[i, h] - vrs24[j, h]) + X * (vis24[i, h] - vis24[j, h])) / den)
+            @constraint(model_static_24,
+                Iis24[l, h] == (R * (vis24[i, h] - vis24[j, h]) - X * (vrs24[i, h] - vrs24[j, h])) / den)
+        else
+            @constraint(model_static_24, Irs24[l, h] == 0)
+            @constraint(model_static_24, Iis24[l, h] == 0)
+        end
+    end
+
+    for k in nodes
+        @constraint(model_static_24, vs24[k, h]^2 == vrs24[k, h]^2 + vis24[k, h]^2)
+    end
+end
+
+println("Resolviendo evaluación de 24 h con la topología estática fija...")
+optimize!(model_static_24)
+
+if termination_status(model_static_24) ∉ [MOI.OPTIMAL, MOI.LOCALLY_SOLVED]
+    error("Evaluación estática 24 h falló: ", termination_status(model_static_24))
+end
+
+losses_hourly_estatico = Dict{Int, Float64}()
+for h in horas
+    losses_hourly_estatico[h] = sum(lines[l].Rl * (value(Irs24[l, h])^2 + value(Iis24[l, h])^2) for l in branches) * SBASE_KVA
+end
+
+losses_hourly_dinamico = Dict{Int, Float64}()
+for h in horas
+    losses_hourly_dinamico[h] = sum(lines[l].Rl * (value(Ir[l, h])^2 + value(Ii[l, h])^2) for l in branches) * SBASE_KVA
+end
+
+loss_estatico_pu = objective_value(model_static_24)
+loss_estatico_kWh = loss_estatico_pu * SBASE_KVA
+reduccion_estatico_kWh = loss_kW_original - loss_estatico_kWh
+reduccion_estatico_pct = (reduccion_estatico_kWh / loss_kW_original) * 100
+
+loss_din_pu = sum(lines[l].Rl * (value(Ir[l, h])^2 + value(Ii[l, h])^2) for h in horas for l in branches)
+loss_din_kWh = loss_din_pu * SBASE_KVA
+reduccion_dinamico_kWh = loss_kW_original - loss_din_kWh
+reduccion_dinamico_pct = (reduccion_dinamico_kWh / loss_kW_original) * 100
+
+println("\n" * "="^80)
+println("RESULTADO ESCENARIO ESTÁTICO (topología de h=12 evaluada en 24 h)")
+println("="^80)
+println("  Topología estática activas   : ", join(topologia_estatica, ", "))
+println("  Lin. desconectadas (estático): ", join(lineas_apagadas_estatico, ", "))
+println("  Pérdidas base (24 h)         : ", round(loss_kW_original, digits=2), " kWh")
+println("  Pérdidas estáticas (24 h)    : ", round(loss_estatico_kWh, digits=2), " kWh")
+println("  Reducción estática (24 h)    : ", round(reduccion_estatico_kWh, digits=2), " kWh  (", round(reduccion_estatico_pct, digits=2), " %)")
+println("  Pérdidas dinámicas (24 h)    : ", round(loss_din_kWh, digits=2), " kWh")
+println("  Reducción dinámica (24 h)    : ", round(reduccion_dinamico_kWh, digits=2), " kWh  (", round(reduccion_dinamico_pct, digits=2), " %)")
+println("  Beneficio extra dinámico     : ", round(reduccion_dinamico_pct - reduccion_estatico_pct, digits=2), " puntos porcentuales")
+println("═"^80)
+
+println("\nPÉRDIDAS POR HORA - ESTÁTICO vs DINÁMICO vs BASE:")
+println("Hora | Estático [kWh] | Dinámico [kWh] | Base [kWh] | Red. Estático [%] | Red. Dinámico [%]")
+println("-"^95)
+for h in horas
+    b = losses_hourly_original[h]
+    e = losses_hourly_estatico[h]
+    d = losses_hourly_dinamico[h]
+    re = b > 0 ? ((b - e) / b) * 100 : 0.0
+    rd = b > 0 ? ((b - d) / b) * 100 : 0.0
+    println(rpad(h, 4), " | ",
+            rpad(round(e, digits=2), 15), " | ",
+            rpad(round(d, digits=2), 15), " | ",
+            rpad(round(b, digits=2), 12), " | ",
+            rpad(round(re, digits=2), 19), " | ",
+            round(rd, digits=2))
+end
+println("-"^95)
+
+println("\n" * "═"^64)
+println("ESCENARIO ESTÁTICO COMPLETADO")
+println("═"^64)
