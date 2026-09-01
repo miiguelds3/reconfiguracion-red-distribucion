@@ -5,11 +5,11 @@ using JuMP, Juniper, Ipopt, HiGHS, CSV, DataFrames, LinearAlgebra, Printf, Plots
 # ============================================
 
 # 1. SELECCIONAR ESCENARIO
-const ESCENARIO = "5_nodos"  # "5_nodos", "14_nodos", "33_nodos"
+const ESCENARIO = "14_nodos"  # "5_nodos", "14_nodos", "33_nodos"
 
 # 2. PARÁMETROS DEL SISTEMA
 const SBASE_KVA = 1000.0      # Potencia base en kVA
-const VBASE_KV = 13.2         # Voltaje base en kV
+const VBASE_KV = 23           # Voltaje base en kV
 const VMIN = 0.90             # Voltaje mínimo en pu
 const VMAX = 1.10             # Voltaje máximo en pu
 const SLACK_BUS = :N1         # Nodo slack
