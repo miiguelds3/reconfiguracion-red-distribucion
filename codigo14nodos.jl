@@ -22,7 +22,7 @@ const GD_ACTIVO = false        # ← IMPORTANTE: false
 const COMP_CAP_ACTIVA = false  # ← IMPORTANTE: false
 
 # 5. TIE-LINES INICIALMENTE DESCONECTADAS
-const TIE_LINES = [:c, :e, :g]  # Vacío si no hay tie-lines, o [:t1, :t2, :t3] 
+const TIE_LINES = [:t1, :t2, :t3]  # Vacío si no hay tie-lines, o [:t1, :t2, :t3] 
 
 # 6. ARCHIVOS
 const ARCHIVO_FACTORES = "factores.csv"
